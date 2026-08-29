@@ -1,0 +1,30 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Package app bundle
+        run: |
+          APP=build/WhisperKey.app
+          mkdir -p "$APP/Contents/MacOS"
+          cp .build/release/WhisperKey "$APP/Contents/MacOS/"
+          cp Info.plist "$APP/Contents/"
+          codesign --force --sign - "$APP"
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhisperKey.app
+          path: build/WhisperKey.app
