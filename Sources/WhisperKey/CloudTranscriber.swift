@@ -78,7 +78,46 @@ struct EngineOption {
     ]
 }
 
-/// API keys live in the login Keychain, service com.dbiadok.whisperkey, account = provider id.
+/// API keys live in a user-only file (~/Library/Application Support/WhisperKey/keys.json,
+/// chmod 600). Unlike the Keychain, this never re-prompts when the app's ad-hoc
+/// signature changes after a rebuild.
+enum KeyStore {
+    private static let fileURL: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("WhisperKey", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("keys.json")
+    }()
+
+    private static func load() -> [String: String] {
+        guard let data = try? Data(contentsOf: fileURL),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String]
+        else { return [:] }
+        return dict
+    }
+
+    private static func save(_ dict: [String: String]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]) else { return }
+        try? data.write(to: fileURL)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    }
+
+    static func set(_ value: String, account: String) {
+        var dict = load()
+        dict[account] = value
+        save(dict)
+    }
+
+    static func get(account: String) -> String? {
+        load()[account]
+    }
+
+    static func has(account: String) -> Bool {
+        load()[account] != nil
+    }
+}
+
+/// Legacy storage — kept only to migrate previously saved keys out of the Keychain.
 enum Keychain {
     private static let service = "com.dbiadok.whisperkey"
 

@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         ModelManager.shared.onDownloadStateChange = { [weak self] in self?.rebuildMenu() }
 
+        migrateKeysFromKeychainIfNeeded()
         registerMainHotKey()
         warnIfModifierHotKeyUnavailable()
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
@@ -77,6 +78,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     HUD.shared.saveSnapshot(to: dir.appendingPathComponent("hud-done.png"))
                     NSApp.terminate(nil)
                 }
+            }
+        }
+    }
+
+    /// One-time move of API keys from the Keychain to the app's own key file.
+    /// The Keychain re-prompts every time the ad-hoc signature changes; the file doesn't.
+    private func migrateKeysFromKeychainIfNeeded() {
+        let flag = "keychainKeysMigrated"
+        guard !UserDefaults.standard.bool(forKey: flag) else { return }
+        UserDefaults.standard.set(true, forKey: flag)
+        for provider in CloudProvider.all where !KeyStore.has(account: provider.id) {
+            if let key = Keychain.get(account: provider.id) {
+                KeyStore.set(key, account: provider.id)
             }
         }
     }
@@ -218,7 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startRecording() {
         let engine = currentEngine
         if let provider = engine.provider {
-            guard Keychain.has(account: provider.id) else {
+            guard KeyStore.has(account: provider.id) else {
                 promptForAPIKey(provider: provider)
                 return
             }
@@ -332,7 +346,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let result = Result { () throws -> String in
                 if let provider = engine.provider,
                    let cloudModel = engine.model,
-                   let apiKey = Keychain.get(account: provider.id) {
+                   let apiKey = KeyStore.get(account: provider.id) {
                     do {
                         return try CloudTranscriber.transcribe(
                             wav: wav, provider: provider, model: cloudModel,
@@ -474,7 +488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         submenu.addItem(.separator())
         for provider in CloudProvider.all {
-            let saved = Keychain.has(account: provider.id)
+            let saved = KeyStore.has(account: provider.id)
             let item = makeItem(
                 "API-ключ \(provider.title)…\(saved ? " (сохранён)" : "")",
                 action: #selector(enterAPIKey(_:))
@@ -606,7 +620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let option = EngineOption.all[sender.tag]
         UserDefaults.standard.set(option.provider?.id ?? "local", forKey: "engineProvider")
         UserDefaults.standard.set(option.model ?? "", forKey: "engineModel")
-        if let provider = option.provider, !Keychain.has(account: provider.id) {
+        if let provider = option.provider, !KeyStore.has(account: provider.id) {
             promptForAPIKey(provider: provider)
         }
         rebuildMenu()
@@ -623,9 +637,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func promptForAPIKey(provider: CloudProvider) {
         let alert = NSAlert()
         alert.messageText = "API-ключ \(provider.title)"
-        alert.informativeText = Keychain.has(account: provider.id)
-            ? "Ключ уже сохранён. Введите новый, чтобы заменить его в Связке ключей."
-            : "Вставьте ваш API-ключ \(provider.title). Он будет сохранён в Связке ключей (Keychain) и никуда больше не передаётся."
+        alert.informativeText = KeyStore.has(account: provider.id)
+            ? "Ключ уже сохранён. Введите новый, чтобы заменить его."
+            : "Вставьте ваш API-ключ \(provider.title). Он сохранится в настройках приложения (файл доступен только вашему пользователю) и используется только для запросов к \(provider.title)."
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
         field.placeholderString = provider.keyPlaceholder
         alert.accessoryView = field
@@ -636,7 +650,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
-        Keychain.set(key, account: provider.id)
+        KeyStore.set(key, account: provider.id)
     }
 
     @objc private func selectModel(_ sender: NSMenuItem) {
