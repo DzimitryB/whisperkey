@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 /// A cloud speech-to-text provider. OpenAI-compatible ones use /audio/transcriptions
 /// with multipart upload; Gemini takes base64 audio inside a generateContent JSON request.
@@ -114,44 +113,6 @@ enum KeyStore {
 
     static func has(account: String) -> Bool {
         load()[account] != nil
-    }
-}
-
-/// Legacy storage — kept only to migrate previously saved keys out of the Keychain.
-enum Keychain {
-    private static let service = "com.dbiadok.whisperkey"
-
-    static func set(_ value: String, account: String) {
-        let data = Data(value.utf8)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var add = query
-            add[kSecValueData as String] = data
-            SecItemAdd(add as CFDictionary, nil)
-        }
-    }
-
-    static func get(account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func has(account: String) -> Bool {
-        get(account: account) != nil
     }
 }
 

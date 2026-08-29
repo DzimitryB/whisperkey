@@ -51,9 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         ModelManager.shared.onDownloadStateChange = { [weak self] in self?.rebuildMenu() }
 
-        migrateKeysFromKeychainIfNeeded()
         registerMainHotKey()
-        warnIfModifierHotKeyUnavailable()
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
 
         if CommandLine.arguments.contains("--hud-test") {
@@ -78,19 +76,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     HUD.shared.saveSnapshot(to: dir.appendingPathComponent("hud-done.png"))
                     NSApp.terminate(nil)
                 }
-            }
-        }
-    }
-
-    /// One-time move of API keys from the Keychain to the app's own key file.
-    /// The Keychain re-prompts every time the ad-hoc signature changes; the file doesn't.
-    private func migrateKeysFromKeychainIfNeeded() {
-        let flag = "keychainKeysMigrated"
-        guard !UserDefaults.standard.bool(forKey: flag) else { return }
-        UserDefaults.standard.set(true, forKey: flag)
-        for provider in CloudProvider.all where !KeyStore.has(account: provider.id) {
-            if let key = Keychain.get(account: provider.id) {
-                KeyStore.set(key, account: provider.id)
             }
         }
     }
@@ -426,6 +411,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusLine.isEnabled = false
         menu.addItem(statusLine)
 
+        // Silent hint instead of popups: modifier-only hotkey needs Accessibility.
+        if hotKeyModifierOnly && !AXIsProcessTrusted() {
+            let warn = NSMenuItem(
+                title: "⚠️ Правый ⌘ не работает — нет «Универсального доступа»",
+                action: nil, keyEquivalent: ""
+            )
+            warn.isEnabled = false
+            menu.addItem(warn)
+            menu.addItem(makeItem("Открыть настройки Универсального доступа…",
+                                  action: #selector(openAccessibilitySettings)))
+        }
+
         switch state {
         case .idle:
             menu.addItem(makeItem("Начать запись", action: #selector(toggleRecording)))
@@ -687,14 +684,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleAutoPaste() {
-        let current = UserDefaults.standard.bool(forKey: "autoPaste")
-        UserDefaults.standard.set(!current, forKey: "autoPaste")
+        let enabling = !UserDefaults.standard.bool(forKey: "autoPaste")
+        UserDefaults.standard.set(enabling, forKey: "autoPaste")
+        if enabling && !AXIsProcessTrusted() {
+            // The only moment we ask for Accessibility for pasting: explicit user action.
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
+        }
         rebuildMenu()
     }
 
     @objc private func toggleSounds() {
         UserDefaults.standard.set(!soundsEnabled, forKey: "sounds")
         rebuildMenu()
+    }
+
+    @objc private func openAccessibilitySettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func openModelsFolder() {

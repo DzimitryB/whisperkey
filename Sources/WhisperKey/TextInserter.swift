@@ -8,13 +8,10 @@ enum TextInserter {
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        guard UserDefaults.standard.bool(forKey: "autoPaste") else { return }
-        guard AXIsProcessTrusted() else {
-            // Text stays on the clipboard; ask for the permission needed to auto-paste.
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-            AXIsProcessTrustedWithOptions(options)
-            return
-        }
+        // Auto-paste needs Accessibility; without it the text silently stays on the
+        // clipboard — no spontaneous permission prompts (asked only when the user
+        // enables the toggle in the menu).
+        guard UserDefaults.standard.bool(forKey: "autoPaste"), AXIsProcessTrusted() else { return }
 
         // Small delay so the pasteboard settles and hotkey modifiers are released.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
