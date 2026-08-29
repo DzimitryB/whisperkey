@@ -9,14 +9,17 @@ struct CatalogModel {
 final class ModelManager: NSObject {
     static let shared = ModelManager()
 
-    static let catalog: [CatalogModel] = [
-        CatalogModel(title: "large-v3-turbo q5 — рекомендуется (~574 МБ)", file: "ggml-large-v3-turbo-q5_0.bin"),
-        CatalogModel(title: "large-v3-turbo (~1.6 ГБ)", file: "ggml-large-v3-turbo.bin"),
-        CatalogModel(title: "large-v3 — максимум качества (~3.1 ГБ)", file: "ggml-large-v3.bin"),
-        CatalogModel(title: "medium (~1.5 ГБ)", file: "ggml-medium.bin"),
-        CatalogModel(title: "small (~488 МБ)", file: "ggml-small.bin"),
-        CatalogModel(title: "base (~148 МБ)", file: "ggml-base.bin"),
-    ]
+    /// Computed so titles follow the current UI language.
+    static var catalog: [CatalogModel] {
+        [
+            CatalogModel(title: "large-v3-turbo q5 — \(L("model.recommended")) (~574 \(L("unit.mb")))", file: "ggml-large-v3-turbo-q5_0.bin"),
+            CatalogModel(title: "large-v3-turbo (~1.6 \(L("unit.gb")))", file: "ggml-large-v3-turbo.bin"),
+            CatalogModel(title: "large-v3 — \(L("model.best")) (~3.1 \(L("unit.gb")))", file: "ggml-large-v3.bin"),
+            CatalogModel(title: "medium (~1.5 \(L("unit.gb")))", file: "ggml-medium.bin"),
+            CatalogModel(title: "small (~488 \(L("unit.mb")))", file: "ggml-small.bin"),
+            CatalogModel(title: "base (~148 \(L("unit.mb")))", file: "ggml-base.bin"),
+        ]
+    }
 
     static let baseURL = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/")!
 

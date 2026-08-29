@@ -9,9 +9,9 @@ enum Transcriber {
         var errorDescription: String? {
             switch self {
             case .cliNotFound:
-                return "Не найден whisper-cli. Установите его: brew install whisper-cpp"
+                return L("err.noCli")
             case .failed(let message):
-                return "Ошибка распознавания: \(message)"
+                return L("err.tr", message)
             }
         }
     }

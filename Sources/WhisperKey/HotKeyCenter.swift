@@ -86,14 +86,17 @@ struct HotKeyPreset {
     let modifiers: UInt32
     var modifierOnly: Bool = false
 
-    static let all: [HotKeyPreset] = [
-        HotKeyPreset(title: "⌥ Пробел", keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey)),
-        HotKeyPreset(title: "⌃⌥ Пробел", keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey)),
-        HotKeyPreset(title: "⌘⇧ Пробел", keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey | shiftKey)),
-        HotKeyPreset(title: "Правый ⌘", keyCode: UInt32(kVK_RightCommand), modifiers: 0, modifierOnly: true),
-        HotKeyPreset(title: "F13", keyCode: UInt32(kVK_F13), modifiers: 0),
-        HotKeyPreset(title: "F19", keyCode: UInt32(kVK_F19), modifiers: 0),
-    ]
+    /// Computed so titles follow the current UI language.
+    static var all: [HotKeyPreset] {
+        [
+            HotKeyPreset(title: "⌥ \(L("key.space"))", keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey)),
+            HotKeyPreset(title: "⌃⌥ \(L("key.space"))", keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey)),
+            HotKeyPreset(title: "⌘⇧ \(L("key.space"))", keyCode: UInt32(kVK_Space), modifiers: UInt32(cmdKey | shiftKey)),
+            HotKeyPreset(title: L("key.rightcmd"), keyCode: UInt32(kVK_RightCommand), modifiers: 0, modifierOnly: true),
+            HotKeyPreset(title: "F13", keyCode: UInt32(kVK_F13), modifiers: 0),
+            HotKeyPreset(title: "F19", keyCode: UInt32(kVK_F19), modifiers: 0),
+        ]
+    }
 }
 
 /// Tracks press/release of a single physical modifier key via NSEvent monitors.

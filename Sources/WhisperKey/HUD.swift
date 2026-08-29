@@ -69,7 +69,7 @@ final class HUD {
         spinner.stopAnimation(nil)
         levelView.isHidden = false
         levelView.start()
-        setLabel("Запись… 0:00", x: 86)
+        setLabel(L("hud.rec", 0, 0), x: 86)
         present()
     }
 
@@ -78,10 +78,10 @@ final class HUD {
     }
 
     func updateTime(_ seconds: Int) {
-        label.stringValue = String(format: "Запись… %d:%02d", seconds / 60, seconds % 60)
+        label.stringValue = L("hud.rec", seconds / 60, seconds % 60)
     }
 
-    func showProcessing(text: String = "Распознаю…") {
+    func showProcessing(text: String = L("hud.processing")) {
         generation += 1
         iconView.isHidden = true
         levelView.stop()

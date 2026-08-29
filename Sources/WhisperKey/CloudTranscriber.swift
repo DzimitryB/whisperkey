@@ -48,7 +48,7 @@ struct CloudProvider {
         title: "Mistral",
         endpoint: URL(string: "https://api.mistral.ai/v1/audio/transcriptions")!,
         kind: .openAICompatible,
-        keyPlaceholder: "ключ из console.mistral.ai"
+        keyPlaceholder: "console.mistral.ai"
     )
 
     static let all: [CloudProvider] = [.openAI, .groq, .google, .elevenLabs, .mistral]
@@ -59,22 +59,25 @@ struct CloudProvider {
 }
 
 /// A selectable recognition engine: local whisper.cpp (provider == nil) or a cloud model.
+/// Computed so titles follow the current UI language.
 struct EngineOption {
     let title: String
     let provider: CloudProvider?
     let model: String?
 
-    static let all: [EngineOption] = [
-        EngineOption(title: "Локально (whisper.cpp)", provider: nil, model: nil),
-        EngineOption(title: "OpenAI — gpt-4o-mini-transcribe (быстро)", provider: .openAI, model: "gpt-4o-mini-transcribe"),
-        EngineOption(title: "OpenAI — gpt-4o-transcribe (точнее)", provider: .openAI, model: "gpt-4o-transcribe"),
-        EngineOption(title: "OpenAI — whisper-1", provider: .openAI, model: "whisper-1"),
-        EngineOption(title: "Groq — whisper-large-v3-turbo (очень быстро)", provider: .groq, model: "whisper-large-v3-turbo"),
-        EngineOption(title: "Google — gemini-2.5-flash (быстро и точно)", provider: .google, model: "gemini-2.5-flash"),
-        EngineOption(title: "Google — gemini-2.5-flash-lite (быстрее)", provider: .google, model: "gemini-2.5-flash-lite"),
-        EngineOption(title: "ElevenLabs — Scribe v2 (топ точности)", provider: .elevenLabs, model: "scribe_v2"),
-        EngineOption(title: "Mistral — Voxtral Mini Transcribe 2 (дёшево)", provider: .mistral, model: "voxtral-mini-latest"),
-    ]
+    static var all: [EngineOption] {
+        [
+            EngineOption(title: L("engine.local"), provider: nil, model: nil),
+            EngineOption(title: "OpenAI — gpt-4o-mini-transcribe (\(L("tag.fast")))", provider: .openAI, model: "gpt-4o-mini-transcribe"),
+            EngineOption(title: "OpenAI — gpt-4o-transcribe (\(L("tag.accurate")))", provider: .openAI, model: "gpt-4o-transcribe"),
+            EngineOption(title: "OpenAI — whisper-1", provider: .openAI, model: "whisper-1"),
+            EngineOption(title: "Groq — whisper-large-v3-turbo (\(L("tag.veryfast")))", provider: .groq, model: "whisper-large-v3-turbo"),
+            EngineOption(title: "Google — gemini-2.5-flash (\(L("tag.fastacc")))", provider: .google, model: "gemini-2.5-flash"),
+            EngineOption(title: "Google — gemini-2.5-flash-lite (\(L("tag.faster")))", provider: .google, model: "gemini-2.5-flash-lite"),
+            EngineOption(title: "ElevenLabs — Scribe v2 (\(L("tag.top")))", provider: .elevenLabs, model: "scribe_v2"),
+            EngineOption(title: "Mistral — Voxtral Mini Transcribe 2 (\(L("tag.cheap")))", provider: .mistral, model: "voxtral-mini-latest"),
+        ]
+    }
 }
 
 /// API keys live in a user-only file (~/Library/Application Support/WhisperKey/keys.json,
@@ -126,13 +129,13 @@ enum CloudTranscriber {
         var errorDescription: String? {
             switch self {
             case .http(let code, let body):
-                return "Сервис ответил ошибкой \(code): \(body)"
+                return L("err.http", code, body)
             case .network(let error):
-                return "Сеть недоступна: \(error.localizedDescription)"
+                return L("err.net", error.localizedDescription)
             case .emptyResponse:
-                return "Сервис вернул пустой ответ."
+                return L("err.empty")
             case .audioTooLarge:
-                return "Запись слишком длинная для Gemini (лимит ~7 минут)."
+                return L("err.large")
             }
         }
     }

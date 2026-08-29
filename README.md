@@ -22,6 +22,7 @@ offline** with whisper.cpp by default, or through the cloud engine of your choic
 - **Tiny HUD** — live mic levels while you speak, a spinner while it thinks, a checkmark when your text is ready
 - **Model manager** — download and switch Whisper models right from the menu bar
 - **Any language** — auto-detect or pin one
+- **Localized UI** — English, Русский, Español, Deutsch, Français, 简体中文; pick at first launch, switch anytime
 - **No noise** — menu bar only, no Dock icon, no telemetry, no accounts, a single ~200 KB binary
 
 ## Install

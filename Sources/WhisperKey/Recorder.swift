@@ -18,8 +18,8 @@ final class Recorder {
 
         var errorDescription: String? {
             switch self {
-            case .noInput: return "Микрофон недоступен (нет входного устройства или нет разрешения)."
-            case .converterFailed: return "Не удалось настроить конвертацию аудио."
+            case .noInput: return L("err.noInput")
+            case .converterFailed: return L("err.converter")
             }
         }
     }

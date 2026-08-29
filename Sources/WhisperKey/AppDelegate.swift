@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        chooseUILanguageIfNeeded()
         installMainMenu()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -59,6 +60,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// First launch: let the user pick the interface language (system language preselected).
+    private func chooseUILanguageIfNeeded() {
+        guard !L10n.hasStoredChoice, !CommandLine.arguments.contains("--hud-test") else { return }
+        let alert = NSAlert()
+        alert.messageText = L("firstrun.title")
+        alert.informativeText = L("firstrun.text")
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26))
+        popup.addItems(withTitles: L10n.languages.map { $0.name })
+        if let idx = L10n.languages.firstIndex(where: { $0.code == L10n.systemDefault() }) {
+            popup.selectItem(at: idx)
+        }
+        alert.accessoryView = popup
+        alert.addButton(withTitle: L("btn.continue"))
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+        L10n.current = L10n.languages[popup.indexOfSelectedItem].code
+    }
+
     /// Saves PNG snapshots of the three HUD states into the given directory, then quits.
     private func runHUDShots(directory: String) {
         let dir = URL(fileURLWithPath: directory, isDirectory: true)
@@ -71,7 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             HUD.shared.showProcessing()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 HUD.shared.saveSnapshot(to: dir.appendingPathComponent("hud-processing.png"))
-                HUD.shared.showDone(success: true, text: "Готово — текст в буфере")
+                HUD.shared.showDone(success: true, text: L("hud.done"))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                     HUD.shared.saveSnapshot(to: dir.appendingPathComponent("hud-done.png"))
                     NSApp.terminate(nil)
@@ -86,14 +105,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mainMenu = NSMenu()
         let editItem = NSMenuItem()
         mainMenu.addItem(editItem)
-        let edit = NSMenu(title: "Правка")
-        edit.addItem(withTitle: "Отменить", action: Selector(("undo:")), keyEquivalent: "z")
-        edit.addItem(withTitle: "Повторить", action: Selector(("redo:")), keyEquivalent: "Z")
+        let edit = NSMenu(title: L("edit.title"))
+        edit.addItem(withTitle: L("edit.undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: L("edit.redo"), action: Selector(("redo:")), keyEquivalent: "Z")
         edit.addItem(.separator())
-        edit.addItem(withTitle: "Вырезать", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        edit.addItem(withTitle: "Скопировать", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        edit.addItem(withTitle: "Вставить", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        edit.addItem(withTitle: "Выбрать всё", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(withTitle: L("edit.cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: L("edit.copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: L("edit.paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: L("edit.all"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = edit
         NSApp.mainMenu = mainMenu
     }
@@ -110,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 timer.invalidate()
                 HUD.shared.showProcessing()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                    HUD.shared.showDone(success: true, text: "Готово — текст в буфере")
+                    HUD.shared.showDone(success: true, text: L("hud.done"))
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3) { NSApp.terminate(nil) }
                 }
             }
@@ -128,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             $0.keyCode == hotKeyCode
                 && $0.modifierOnly == hotKeyModifierOnly
                 && ($0.modifierOnly || $0.modifiers == hotKeyModifiers)
-        }?.title ?? "⌥ Пробел"
+        }?.title ?? "⌥ \(L("key.space"))"
     }
 
     private var holdMode: Bool { UserDefaults.standard.bool(forKey: "holdMode") }
@@ -170,14 +189,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Modifier-only hotkeys need Accessibility to see global keyboard events.
+    /// Asked only on explicit user action (choosing the preset), never at launch.
     private func warnIfModifierHotKeyUnavailable() {
         guard hotKeyModifierOnly, !AXIsProcessTrusted() else { return }
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
-        showAlert(
-            title: "Правому ⌘ нужно разрешение",
-            text: "Чтобы реагировать на правый Command, дайте WhisperKey разрешение «Универсальный доступ»:\nНастройки системы → Конфиденциальность и безопасность → Универсальный доступ.\n\nПосле включения выберите «Правый ⌘» в меню ещё раз или перезапустите WhisperKey."
-        )
+        showAlert(title: L("alert.axTitle"), text: L("alert.axText"))
     }
 
     // MARK: - Recording flow
@@ -223,17 +240,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else {
             guard ModelManager.shared.defaultModelURL != nil else {
-                showAlert(
-                    title: "Нет модели",
-                    text: "Скачайте модель распознавания через меню WhisperKey → Локальная модель → Скачать."
-                )
+                showAlert(title: L("alert.noModel"), text: L("alert.noModel.text"))
                 return
             }
             guard Transcriber.findCLI() != nil else {
-                showAlert(
-                    title: "Не найден whisper-cli",
-                    text: "Установите движок распознавания:\nbrew install whisper-cpp"
-                )
+                showAlert(title: L("alert.noCli"), text: L("alert.noCli.text"))
                 return
             }
         }
@@ -246,17 +257,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         default:
-            showAlert(
-                title: "Нет доступа к микрофону",
-                text: "Разрешите доступ: Настройки системы → Конфиденциальность и безопасность → Микрофон → WhisperKey."
-            )
+            showAlert(title: L("alert.noMic"), text: L("alert.noMic.text"))
             return
         }
 
         do {
             try recorder.start()
         } catch {
-            showAlert(title: "Не удалось начать запись", text: error.localizedDescription)
+            showAlert(title: L("alert.recFail"), text: error.localizedDescription)
             return
         }
 
@@ -269,10 +277,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         escHotKeyID = HotKeyCenter.shared.register(
-            keyCode: UInt32(kVK_Escape), modifiers: 0
-        ) { [weak self] in
-            self?.cancelRecording()
-        }
+            keyCode: UInt32(kVK_Escape),
+            modifiers: 0,
+            pressed: { [weak self] in self?.cancelRecording() }
+        )
 
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.recordingTick()
@@ -319,7 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state = .processing
         applyIcon(symbol: "hourglass", tint: .systemOrange)
         if let provider = engine.provider {
-            HUD.shared.showProcessing(text: "Распознаю (\(provider.title))…")
+            HUD.shared.showProcessing(text: L("hud.processingVia", provider.title))
         } else {
             HUD.shared.showProcessing()
         }
@@ -346,7 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
                 guard let localModel else {
-                    throw Transcriber.TranscriberError.failed("нет локальной модели")
+                    throw Transcriber.TranscriberError.failed(L("err.nolocal"))
                 }
                 return try Transcriber.transcribe(wav: wav, model: localModel, language: language)
             }
@@ -374,17 +382,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastTranscript = text
             playSound("Glass")
             TextInserter.insert(text)
-            HUD.shared.showDone(
-                success: true,
-                text: usedFallback ? "Готово (локально — облако недоступно)" : "Готово — текст в буфере"
-            )
+            HUD.shared.showDone(success: true, text: usedFallback ? L("hud.fallback") : L("hud.done"))
         case .success:
             if soundsEnabled { NSSound.beep() }
-            HUD.shared.showDone(success: false, text: "Ничего не распозналось")
+            HUD.shared.showDone(success: false, text: L("hud.empty"))
         case .failure(let error):
             if soundsEnabled { NSSound.beep() }
-            HUD.shared.showDone(success: false, text: "Ошибка распознавания")
-            showAlert(title: "Распознавание не удалось", text: error.localizedDescription)
+            HUD.shared.showDone(success: false, text: L("hud.fail"))
+            showAlert(title: L("alert.trFail"), text: error.localizedDescription)
         }
         rebuildMenu()
     }
@@ -398,14 +403,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch state {
         case .idle:
             statusTitle = holdMode
-                ? "WhisperKey — удерживайте \(hotKeyTitle)"
-                : "WhisperKey — готов (\(hotKeyTitle))"
+                ? L("status.hold", hotKeyTitle)
+                : L("status.ready", hotKeyTitle)
         case .recording(let start):
             let seconds = Int(Date().timeIntervalSince(start))
             let time = String(format: "%d:%02d", seconds / 60, seconds % 60)
-            statusTitle = holdMode ? "Запись… \(time) — отпустите клавишу" : "Запись… \(time)"
+            statusTitle = holdMode ? L("status.rec.hold", time) : L("status.rec", time)
         case .processing:
-            statusTitle = "Распознаю…"
+            statusTitle = L("status.processing")
         }
         let statusLine = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
         statusLine.isEnabled = false
@@ -413,22 +418,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Silent hint instead of popups: modifier-only hotkey needs Accessibility.
         if hotKeyModifierOnly && !AXIsProcessTrusted() {
-            let warn = NSMenuItem(
-                title: "⚠️ Правый ⌘ не работает — нет «Универсального доступа»",
-                action: nil, keyEquivalent: ""
-            )
+            let warn = NSMenuItem(title: L("warn.rightcmd"), action: nil, keyEquivalent: "")
             warn.isEnabled = false
             menu.addItem(warn)
-            menu.addItem(makeItem("Открыть настройки Универсального доступа…",
-                                  action: #selector(openAccessibilitySettings)))
+            menu.addItem(makeItem(L("menu.axSettings"), action: #selector(openAccessibilitySettings)))
         }
 
         switch state {
         case .idle:
-            menu.addItem(makeItem("Начать запись", action: #selector(toggleRecording)))
+            menu.addItem(makeItem(L("menu.record"), action: #selector(toggleRecording)))
         case .recording:
-            menu.addItem(makeItem("Готово — распознать и вставить", action: #selector(stopAndTranscribe)))
-            menu.addItem(makeItem("Отменить (Esc)", action: #selector(cancelRecording)))
+            menu.addItem(makeItem(L("menu.finish"), action: #selector(stopAndTranscribe)))
+            menu.addItem(makeItem(L("menu.cancel"), action: #selector(cancelRecording)))
         case .processing:
             break
         }
@@ -438,8 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let preview = lastTranscript.count > 60
                 ? String(lastTranscript.prefix(60)) + "…"
                 : lastTranscript
-            let item = makeItem("Скопировать: «\(preview)»", action: #selector(copyLastTranscript))
-            menu.addItem(item)
+            menu.addItem(makeItem(L("menu.copy", preview), action: #selector(copyLastTranscript)))
         }
 
         menu.addItem(.separator())
@@ -448,28 +448,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(buildLanguageMenu())
         menu.addItem(buildHotKeyMenu())
         menu.addItem(buildModeMenu())
+        menu.addItem(buildUILanguageMenu())
 
-        let autoPaste = makeItem("Автовставка в активное поле", action: #selector(toggleAutoPaste))
+        let autoPaste = makeItem(L("menu.autopaste"), action: #selector(toggleAutoPaste))
         autoPaste.state = UserDefaults.standard.bool(forKey: "autoPaste") ? .on : .off
         menu.addItem(autoPaste)
 
-        let sounds = makeItem("Звуковые сигналы", action: #selector(toggleSounds))
+        let sounds = makeItem(L("menu.sounds"), action: #selector(toggleSounds))
         sounds.state = soundsEnabled ? .on : .off
         menu.addItem(sounds)
 
         menu.addItem(.separator())
-        menu.addItem(makeItem("Открыть папку моделей", action: #selector(openModelsFolder)))
-        let loginItem = makeItem("Запускать при входе", action: #selector(toggleLoginItem))
+        menu.addItem(makeItem(L("menu.modelsFolder"), action: #selector(openModelsFolder)))
+        let loginItem = makeItem(L("menu.login"), action: #selector(toggleLoginItem))
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(loginItem)
         menu.addItem(.separator())
-        menu.addItem(makeItem("Выйти", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(makeItem(L("menu.quit"), action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
     }
 
     private func buildEngineMenu() -> NSMenuItem {
-        let root = NSMenuItem(title: "Распознавание", action: nil, keyEquivalent: "")
+        let root = NSMenuItem(title: L("menu.engine"), action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         let current = currentEngine
 
@@ -485,11 +486,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         submenu.addItem(.separator())
         for provider in CloudProvider.all {
-            let saved = KeyStore.has(account: provider.id)
-            let item = makeItem(
-                "API-ключ \(provider.title)…\(saved ? " (сохранён)" : "")",
-                action: #selector(enterAPIKey(_:))
-            )
+            let saved = KeyStore.has(account: provider.id) ? L("apikey.saved") : ""
+            let item = makeItem(L("apikey.item", provider.title) + saved, action: #selector(enterAPIKey(_:)))
             item.representedObject = provider.id
             submenu.addItem(item)
         }
@@ -500,12 +498,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildModelMenu() -> NSMenuItem {
         let manager = ModelManager.shared
-        let root = NSMenuItem(title: "Локальная модель", action: nil, keyEquivalent: "")
+        let root = NSMenuItem(title: L("menu.model"), action: nil, keyEquivalent: "")
         let submenu = NSMenu()
 
         let installed = manager.installedModels()
         if installed.isEmpty {
-            let none = NSMenuItem(title: "Нет установленных моделей", action: nil, keyEquivalent: "")
+            let none = NSMenuItem(title: L("models.none"), action: nil, keyEquivalent: "")
             none.isEnabled = false
             submenu.addItem(none)
         }
@@ -520,7 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         submenu.addItem(.separator())
-        let header = NSMenuItem(title: "Скачать:", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: L("models.download"), action: nil, keyEquivalent: "")
         header.isEnabled = false
         submenu.addItem(header)
 
@@ -546,13 +544,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildLanguageMenu() -> NSMenuItem {
-        let root = NSMenuItem(title: "Язык", action: nil, keyEquivalent: "")
+        let root = NSMenuItem(title: L("menu.speechLang"), action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         let current = UserDefaults.standard.string(forKey: "language") ?? "auto"
         let options: [(String, String)] = [
-            ("Определять автоматически", "auto"),
-            ("Русский", "ru"),
-            ("English", "en"),
+            (L("speech.auto"), "auto"),
+            (L("speech.ru"), "ru"),
+            (L("speech.en"), "en"),
         ]
         for (title, code) in options {
             let item = makeItem(title, action: #selector(selectLanguage(_:)))
@@ -565,7 +563,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildHotKeyMenu() -> NSMenuItem {
-        let root = NSMenuItem(title: "Горячая клавиша", action: nil, keyEquivalent: "")
+        let root = NSMenuItem(title: L("menu.hotkey"), action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         for (index, preset) in HotKeyPreset.all.enumerated() {
             let item = makeItem(preset.title, action: #selector(selectHotKey(_:)))
@@ -582,19 +580,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildModeMenu() -> NSMenuItem {
-        let root = NSMenuItem(title: "Режим записи", action: nil, keyEquivalent: "")
+        let root = NSMenuItem(title: L("menu.mode"), action: nil, keyEquivalent: "")
         let submenu = NSMenu()
 
-        let hold = makeItem("Удерживать клавишу (push-to-talk)", action: #selector(selectMode(_:)))
+        let hold = makeItem(L("mode.hold"), action: #selector(selectMode(_:)))
         hold.representedObject = true
         hold.state = holdMode ? .on : .off
         submenu.addItem(hold)
 
-        let toggle = makeItem("Нажать — начать, нажать — закончить", action: #selector(selectMode(_:)))
+        let toggle = makeItem(L("mode.toggle"), action: #selector(selectMode(_:)))
         toggle.representedObject = false
         toggle.state = holdMode ? .off : .on
         submenu.addItem(toggle)
 
+        root.submenu = submenu
+        return root
+    }
+
+    private func buildUILanguageMenu() -> NSMenuItem {
+        let root = NSMenuItem(title: L("menu.uiLang"), action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for language in L10n.languages {
+            let item = makeItem(language.name, action: #selector(selectUILanguage(_:)))
+            item.representedObject = language.code
+            item.state = L10n.current == language.code ? .on : .off
+            submenu.addItem(item)
+        }
         root.submenu = submenu
         return root
     }
@@ -630,18 +641,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
-    /// The user types/pastes their own key; it is stored in the login Keychain.
+    /// The user types/pastes their own key; it is stored in the app's key file.
     private func promptForAPIKey(provider: CloudProvider) {
         let alert = NSAlert()
-        alert.messageText = "API-ключ \(provider.title)"
+        alert.messageText = L("apikey.title", provider.title)
         alert.informativeText = KeyStore.has(account: provider.id)
-            ? "Ключ уже сохранён. Введите новый, чтобы заменить его."
-            : "Вставьте ваш API-ключ \(provider.title). Он сохранится в настройках приложения (файл доступен только вашему пользователю) и используется только для запросов к \(provider.title)."
+            ? L("apikey.replace")
+            : L("apikey.info", provider.title, provider.title)
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
         field.placeholderString = provider.keyPlaceholder
         alert.accessoryView = field
-        alert.addButton(withTitle: "Сохранить")
-        alert.addButton(withTitle: "Отмена")
+        alert.addButton(withTitle: L("btn.save"))
+        alert.addButton(withTitle: L("btn.cancel"))
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -683,6 +694,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    @objc private func selectUILanguage(_ sender: NSMenuItem) {
+        guard let code = sender.representedObject as? String else { return }
+        L10n.current = code
+        installMainMenu()
+        rebuildMenu()
+    }
+
     @objc private func toggleAutoPaste() {
         let enabling = !UserDefaults.standard.bool(forKey: "autoPaste")
         UserDefaults.standard.set(enabling, forKey: "autoPaste")
@@ -717,7 +735,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try service.register()
             }
         } catch {
-            showAlert(title: "Не удалось изменить автозапуск", text: error.localizedDescription)
+            showAlert(title: L("alert.loginFail"), text: error.localizedDescription)
         }
         rebuildMenu()
     }
