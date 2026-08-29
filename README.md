@@ -1,74 +1,74 @@
 # WhisperKey
 
-Локальный аналог SuperWhisper для macOS: глобальная горячая клавиша → запись голоса →
-распознавание через whisper.cpp (полностью офлайн, Metal) → автоматическая вставка текста
-в активное поле ввода.
+> Hold a key. Speak. Paste anywhere.
 
-| Запись | Распознавание | Готово |
+[![build](https://github.com/DzimitryB/whisperkey/actions/workflows/build.yml/badge.svg)](https://github.com/DzimitryB/whisperkey/actions/workflows/build.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black)
+
+Push-to-talk dictation for macOS. Hold a hotkey, speak, release — your speech is
+transcribed and lands in the clipboard, ready to paste into any app. Runs **100%
+offline** with whisper.cpp by default, or through the cloud engine of your choice.
+
+| Recording | Transcribing | Done |
 |---|---|---|
-| ![Запись](docs/hud-recording.png) | ![Распознавание](docs/hud-processing.png) | ![Готово](docs/hud-done.png) |
+| ![Recording](docs/hud-recording.png) | ![Transcribing](docs/hud-processing.png) | ![Done](docs/hud-done.png) |
 
-## Как пользоваться
+## Features
 
-1. Зажмите и **держите ⌥ Пробел** — идёт запись: внизу экрана появляется маленькое
-   окошко с микрофоном, таймером и «живыми» столбиками уровня звука.
-2. Говорите, не отпуская клавишу.
-3. **Отпустите** — окошко показывает «Распознаю…» со спиннером, а когда текст готов
-   и лежит в буфере — зелёную галочку «Готово», после чего исчезает.
-   Вставьте его через ⌘V. Если включить «Автовставку» в меню, текст будет
-   вставляться в активное поле сам.
-4. **Esc** во время записи — отмена. Случайное короткое нажатие (< 0.3 c) игнорируется.
+- **Push-to-talk** — hold ⌥ Space (or right ⌘, F13, F19…), release to transcribe; Esc cancels
+- **Offline by default** — whisper.cpp on Metal, models run entirely on your Mac
+- **Cloud engines, if you want them** — OpenAI, Groq, Google Gemini, ElevenLabs Scribe, Mistral Voxtral; automatic fallback to the local model when the network is down
+- **Tiny HUD** — live mic levels while you speak, a spinner while it thinks, a checkmark when your text is ready
+- **Model manager** — download and switch Whisper models right from the menu bar
+- **Any language** — auto-detect or pin one
+- **No noise** — menu bar only, no Dock icon, no telemetry, no accounts, a single ~200 KB binary
 
-В меню «Режим записи» можно переключиться на старый режим:
-нажать — начать, нажать ещё раз — закончить.
+## Install
 
-## Меню (иконка микрофона в меню-баре)
+**Prebuilt:** grab `WhisperKey.zip` from [Releases](https://github.com/DzimitryB/whisperkey/releases),
+unzip into `/Applications`, then right-click → Open on first launch (the app is not notarized).
 
-- **Распознавание** — движок: локальный whisper.cpp или облачные API:
-  - OpenAI gpt-4o-transcribe / gpt-4o-mini-transcribe / whisper-1 (platform.openai.com)
-  - Groq whisper-large-v3-turbo — самый дешёвый, ~$0.04/час (console.groq.com)
-  - Google Gemini 2.5 flash / flash-lite — ключ с aistudio.google.com, записи до ~7 минут
-  - ElevenLabs Scribe v2 — лучшая точность для русского (WER 3.1% на FLEURS), ~$0.22/час (elevenlabs.io)
-  - Mistral Voxtral Mini Transcribe 2 — $0.003/мин (console.mistral.ai)
-  Облачные быстрее и точнее, но аудио отправляется на сервер провайдера.
-  API-ключ вводится там же в меню и хранится в
-  `~/Library/Application Support/WhisperKey/keys.json` (права 600 — читается
-  только вашим пользователем; в Keychain не хранится, чтобы пересборки
-  с ad-hoc подписью не вызывали повторных запросов доступа).
-  Если облако недоступно (нет сети, ошибка API) — автоматический откат
-  на локальную модель, HUD покажет «Готово (локально — облако недоступно)».
-- **Локальная модель** — выбор модели по умолчанию и скачивание новых (галка = текущая).
-- **Язык** — авто / русский / английский.
-- **Горячая клавиша** — пресеты: ⌥Space, ⌃⌥Space, ⌘⇧Space, правый ⌘, F13, F19.
-  Правый ⌘ требует разрешения «Универсальный доступ» (отслеживание модификатора);
-  если во время его удержания нажать другую клавишу (обычный шорткат вроде ⌘C),
-  запись автоматически отменяется.
-- **Автовставка** — выключена по умолчанию: текст копируется в буфер, вставляете ⌘V.
-  Если включить — текст будет вставляться в активное поле автоматически
-  (нужно разрешение «Универсальный доступ»).
-- **Звуковые сигналы** — выключены по умолчанию (окошко появляется беззвучно).
-  Если включить — будут звуки на старте записи и при готовности текста.
-- **Запускать при входе** — автозапуск.
-
-## Разрешения (нужны один раз)
-
-- **Микрофон** — запись голоса.
-- **Универсальный доступ (Accessibility)** — для автовставки (симуляция ⌘V).
-  Настройки системы → Конфиденциальность и безопасность → Универсальный доступ → WhisperKey.
-
-Без Accessibility приложение всё равно работает: текст кладётся в буфер, вставляете ⌘V сами.
-
-## Зависимости
-
-- `brew install whisper-cpp` (движок, бинарь `whisper-cli`)
-- Модели лежат в `~/Library/Application Support/WhisperKey/models/`
-  (скачиваются из huggingface.co/ggerganov/whisper.cpp)
-
-## Сборка
+**From source:**
 
 ```bash
-./build.sh
+git clone https://github.com/DzimitryB/whisperkey.git && cd whisperkey && ./build.sh
 ```
 
-Собирает через SwiftPM, подписывает ad-hoc и кладёт в `/Applications/WhisperKey.app`.
-После пересборки macOS может попросить заново выдать разрешения (ad-hoc подпись меняется).
+For the local engine, install [whisper.cpp](https://github.com/ggml-org/whisper.cpp) —
+`brew install whisper-cpp` — and download a model from the app's menu
+(large-v3-turbo quantized, ~574 MB, is a good default). Cloud engines need no local model:
+just paste your API key in the menu.
+
+## Usage
+
+1. **Hold** the hotkey (default ⌥ Space) and speak.
+2. **Release.** The HUD shows progress and a checkmark when the text is in your clipboard.
+3. **⌘V** wherever you want it.
+
+Everything is configurable from the menu bar icon: engine, model, language, hotkey,
+toggle vs push-to-talk mode, optional auto-paste into the focused field, sounds.
+
+## Engines
+
+| Engine | Runs | Notes |
+|---|---|---|
+| whisper.cpp | on-device | free, private, offline |
+| Groq — whisper-large-v3-turbo | cloud | fastest, ~$0.04/h |
+| OpenAI — gpt-4o-transcribe / mini / whisper-1 | cloud | high accuracy |
+| Google — Gemini 2.5 Flash / Flash-Lite | cloud | free tier, great punctuation |
+| ElevenLabs — Scribe v2 | cloud | top benchmark accuracy, ~$0.22/h |
+| Mistral — Voxtral Mini Transcribe 2 | cloud | ~$0.18/h |
+
+API keys are stored in a user-only file (`chmod 600`), never leave your machine except
+to the provider you picked, and cloud audio goes only to that provider. Local mode
+sends nothing anywhere.
+
+## Permissions
+
+- **Microphone** — required to record.
+- **Accessibility** — optional; only if you enable auto-paste or the right-⌘ hotkey.
+
+## License
+
+[MIT](LICENSE)

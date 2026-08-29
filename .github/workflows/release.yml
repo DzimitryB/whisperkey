@@ -1,0 +1,31 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Package app bundle
+        run: |
+          APP=build/WhisperKey.app
+          mkdir -p "$APP/Contents/MacOS"
+          cp .build/release/WhisperKey "$APP/Contents/MacOS/"
+          cp Info.plist "$APP/Contents/"
+          codesign --force --sign - "$APP"
+          ditto -c -k --keepParent "$APP" WhisperKey.zip
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" WhisperKey.zip --title "WhisperKey $GITHUB_REF_NAME" --generate-notes
