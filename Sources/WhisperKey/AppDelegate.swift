@@ -36,6 +36,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "hotKeyModifierOnly": false,
         ])
 
+        // Snapshot mode: only render HUD states to PNG, no hotkeys/permissions/status item.
+        if let idx = CommandLine.arguments.firstIndex(of: "--hud-shot"),
+           CommandLine.arguments.count > idx + 1 {
+            runHUDShots(directory: CommandLine.arguments[idx + 1])
+            return
+        }
+
         installMainMenu()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -50,6 +57,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if CommandLine.arguments.contains("--hud-test") {
             runHUDTest()
+        }
+    }
+
+    /// Saves PNG snapshots of the three HUD states into the given directory, then quits.
+    private func runHUDShots(directory: String) {
+        let dir = URL(fileURLWithPath: directory, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        HUD.shared.showRecording()
+        HUD.shared.updateLevel(0.25)
+        HUD.shared.updateTime(7)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            HUD.shared.saveSnapshot(to: dir.appendingPathComponent("hud-recording.png"))
+            HUD.shared.showProcessing()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                HUD.shared.saveSnapshot(to: dir.appendingPathComponent("hud-processing.png"))
+                HUD.shared.showDone(success: true, text: "Готово — текст в буфере")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    HUD.shared.saveSnapshot(to: dir.appendingPathComponent("hud-done.png"))
+                    NSApp.terminate(nil)
+                }
+            }
         }
     }
 

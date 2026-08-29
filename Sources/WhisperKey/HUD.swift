@@ -118,6 +118,15 @@ final class HUD {
         panel.alphaValue = 1
     }
 
+    /// Renders the panel content into a PNG — used by --hud-shot to produce README shots.
+    func saveSnapshot(to url: URL) {
+        guard let view = panel.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let data = rep.representation(using: .png, properties: [:]) else { return }
+        try? data.write(to: url)
+    }
+
     // MARK: - Internals
 
     private func setIcon(_ symbol: String, tint: NSColor) {
