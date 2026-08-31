@@ -12,6 +12,12 @@ final class Recorder {
     /// Called from the audio tap queue with the peak level (0...1) of each chunk.
     var levelHandler: ((Float) -> Void)?
 
+    /// Called once per recording, from the audio tap queue, when the first real
+    /// samples arrive — i.e. the mic hardware is actually capturing. Before this
+    /// moment anything spoken is lost, so the UI should not claim "recording" yet.
+    var onFirstBuffer: (() -> Void)?
+    private var firstBufferReported = false
+
     enum RecorderError: LocalizedError {
         case noInput
         case converterFailed
@@ -28,6 +34,7 @@ final class Recorder {
         lock.lock()
         samples.removeAll()
         lock.unlock()
+        firstBufferReported = false
 
         let input = engine.inputNode
         let inFormat = input.outputFormat(forBus: 0)
@@ -109,6 +116,11 @@ final class Recorder {
         lock.lock()
         samples.append(contentsOf: chunk)
         lock.unlock()
+
+        if !firstBufferReported {
+            firstBufferReported = true
+            onFirstBuffer?()
+        }
 
         if let levelHandler {
             var peak: Int16 = 0

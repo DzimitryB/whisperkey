@@ -62,6 +62,18 @@ final class HUD {
 
     // MARK: - States
 
+    /// The mic hardware is spinning up — capture has NOT started yet.
+    func showPreparing() {
+        generation += 1
+        setIcon("mic.fill", tint: .systemGray)
+        iconView.isHidden = false
+        spinner.stopAnimation(nil)
+        levelView.stop()
+        levelView.isHidden = true
+        setLabel(L("hud.preparing"), x: 44)
+        present()
+    }
+
     func showRecording() {
         generation += 1
         setIcon("mic.fill", tint: .systemRed)

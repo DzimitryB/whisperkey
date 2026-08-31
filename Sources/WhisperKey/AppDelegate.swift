@@ -261,6 +261,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // Handlers are set before start(): the first buffers can arrive very quickly.
+        recorder.onFirstBuffer = { [weak self] in
+            DispatchQueue.main.async { self?.captureDidStart() }
+        }
+        recorder.levelHandler = { level in
+            DispatchQueue.main.async { HUD.shared.updateLevel(level) }
+        }
         do {
             try recorder.start()
         } catch {
@@ -268,13 +275,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // The mic hardware needs a moment (Bluetooth mics up to ~1 s) before real
+        // audio flows; until then show "starting" so the user doesn't speak into the void.
         state = .recording(start: Date())
-        playSound("Pop")
-        applyIcon(symbol: "mic.fill", tint: .systemRed)
-        HUD.shared.showRecording()
-        recorder.levelHandler = { level in
-            DispatchQueue.main.async { HUD.shared.updateLevel(level) }
-        }
+        applyIcon(symbol: "mic.fill", tint: .systemOrange)
+        HUD.shared.showPreparing()
 
         escHotKeyID = HotKeyCenter.shared.register(
             keyCode: UInt32(kVK_Escape),
@@ -285,6 +290,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.recordingTick()
         }
+        rebuildMenu()
+    }
+
+    /// First audio buffer arrived — capture is really live: now show "recording".
+    private func captureDidStart() {
+        guard case .recording = state else { return }
+        state = .recording(start: Date())
+        playSound("Pop")
+        applyIcon(symbol: "mic.fill", tint: .systemRed)
+        HUD.shared.showRecording()
         rebuildMenu()
     }
 
