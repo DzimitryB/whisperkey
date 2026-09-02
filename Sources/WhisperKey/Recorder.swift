@@ -12,11 +12,14 @@ final class Recorder {
     /// Called from the audio tap queue with the peak level (0...1) of each chunk.
     var levelHandler: ((Float) -> Void)?
 
-    /// Called once per recording, from the audio tap queue, when the first real
-    /// samples arrive — i.e. the mic hardware is actually capturing. Before this
-    /// moment anything spoken is lost, so the UI should not claim "recording" yet.
+    /// Called once per recording, from the audio tap queue, when the first samples
+    /// with an actual signal arrive — the hardware can deliver zero-filled buffers
+    /// while warming up, so buffer arrival alone doesn't mean audio is captured yet.
     var onFirstBuffer: (() -> Void)?
     private var firstBufferReported = false
+
+    /// Below this int16 peak a chunk is treated as digital silence from a warming-up mic.
+    private static let signalThreshold: Int16 = 10
 
     enum RecorderError: LocalizedError {
         case noInput
@@ -65,9 +68,16 @@ final class Recorder {
     func stop() -> URL? {
         finishEngine()
         lock.lock()
-        let captured = samples
+        var captured = samples
         samples.removeAll()
         lock.unlock()
+
+        // Drop the leading digital silence from mic warm-up (keep a 0.1s margin).
+        guard let firstSignal = captured.firstIndex(where: {
+            $0 >= Self.signalThreshold || $0 <= -Self.signalThreshold
+        }) else { return nil }
+        captured.removeFirst(max(0, firstSignal - 1600))
+
         // Less than ~0.3s of audio is a misfire.
         guard captured.count > 4800 else { return nil }
         let url = FileManager.default.temporaryDirectory
@@ -117,19 +127,18 @@ final class Recorder {
         samples.append(contentsOf: chunk)
         lock.unlock()
 
-        if !firstBufferReported {
+        var peak: Int16 = 0
+        for s in chunk {
+            let magnitude = s == Int16.min ? Int16.max : abs(s)
+            if magnitude > peak { peak = magnitude }
+        }
+
+        if !firstBufferReported && peak >= Self.signalThreshold {
             firstBufferReported = true
             onFirstBuffer?()
         }
 
-        if let levelHandler {
-            var peak: Int16 = 0
-            for s in chunk {
-                let magnitude = s == Int16.min ? Int16.max : abs(s)
-                if magnitude > peak { peak = magnitude }
-            }
-            levelHandler(Float(peak) / 32767)
-        }
+        levelHandler?(Float(peak) / 32767)
     }
 
     private static func writeWAV(samples: [Int16], to url: URL) throws {

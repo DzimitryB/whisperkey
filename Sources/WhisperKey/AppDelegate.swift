@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Carbon.HIToolbox
+import IOKit.hid
 import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -54,6 +55,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         registerMainHotKey()
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
+
+        // NSEvent monitors can go quiet after system sleep — re-arm on wake.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.registerMainHotKey()
+        }
 
         if CommandLine.arguments.contains("--hud-test") {
             runHUDTest()
@@ -188,10 +196,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Modifier-only hotkeys need Accessibility to see global keyboard events.
+    /// Global keyboard monitoring works with EITHER Accessibility OR Input Monitoring —
+    /// macOS may grant it through either list, so check both before complaining.
+    private var canMonitorKeyboard: Bool {
+        AXIsProcessTrusted()
+            || IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
+    }
+
+    /// Modifier-only hotkeys need Accessibility/Input Monitoring for global key events.
     /// Asked only on explicit user action (choosing the preset), never at launch.
     private func warnIfModifierHotKeyUnavailable() {
-        guard hotKeyModifierOnly, !AXIsProcessTrusted() else { return }
+        guard hotKeyModifierOnly, !canMonitorKeyboard else { return }
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
         showAlert(title: L("alert.axTitle"), text: L("alert.axText"))
@@ -432,7 +447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(statusLine)
 
         // Silent hint instead of popups: modifier-only hotkey needs Accessibility.
-        if hotKeyModifierOnly && !AXIsProcessTrusted() {
+        if hotKeyModifierOnly && !canMonitorKeyboard {
             let warn = NSMenuItem(title: L("warn.rightcmd"), action: nil, keyEquivalent: "")
             warn.isEnabled = false
             menu.addItem(warn)
