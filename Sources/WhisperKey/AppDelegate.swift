@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "hotKeyCode": Int(kVK_Space),
             "hotKeyModifiers": Int(optionKey),
             "hotKeyModifierOnly": false,
+            "modifierHotKeyProven": false,
         ])
 
         // Snapshot mode: only render HUD states to PNG, no hotkeys/permissions/status item.
@@ -203,10 +204,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             || IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
     }
 
+    /// TCC status APIs can under-report for ad-hoc signed apps, so the ultimate truth
+    /// is empirical: once the modifier hotkey has actually fired, it obviously works.
+    private var modifierHotKeyProven: Bool {
+        UserDefaults.standard.bool(forKey: "modifierHotKeyProven")
+    }
+
+    private func markModifierHotKeyProven() {
+        guard hotKeyModifierOnly, !modifierHotKeyProven else { return }
+        UserDefaults.standard.set(true, forKey: "modifierHotKeyProven")
+        rebuildMenu()
+    }
+
     /// Modifier-only hotkeys need Accessibility/Input Monitoring for global key events.
     /// Asked only on explicit user action (choosing the preset), never at launch.
     private func warnIfModifierHotKeyUnavailable() {
-        guard hotKeyModifierOnly, !canMonitorKeyboard else { return }
+        guard hotKeyModifierOnly, !canMonitorKeyboard, !modifierHotKeyProven else { return }
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
         showAlert(title: L("alert.axTitle"), text: L("alert.axText"))
@@ -215,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Recording flow
 
     private func hotKeyPressed() {
+        markModifierHotKeyProven()
         if holdMode {
             // Key repeat can fire extra "pressed" events while held — only act from idle.
             if case .idle = state { startRecording() }
@@ -447,7 +461,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(statusLine)
 
         // Silent hint instead of popups: modifier-only hotkey needs Accessibility.
-        if hotKeyModifierOnly && !canMonitorKeyboard {
+        // Skipped once the hotkey has demonstrably fired at least once.
+        if hotKeyModifierOnly && !canMonitorKeyboard && !modifierHotKeyProven {
             let warn = NSMenuItem(title: L("warn.rightcmd"), action: nil, keyEquivalent: "")
             warn.isEnabled = false
             menu.addItem(warn)
