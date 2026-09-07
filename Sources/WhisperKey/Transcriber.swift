@@ -45,10 +45,25 @@ enum Transcriber {
         process.standardError = stderr
 
         try process.run()
+
+        // whisper-cli has no timeout of its own; a hung process would lock the app
+        // in "transcribing" forever. Kill it after a generous deadline.
+        final class Flag { var raised = false }
+        let timedOut = Flag()
+        let watchdog = DispatchWorkItem {
+            timedOut.raised = true
+            process.terminate()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: watchdog)
+
         let outData = stdout.fileHandleForReading.readDataToEndOfFile()
         let errData = stderr.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        watchdog.cancel()
 
+        if timedOut.raised {
+            throw TranscriberError.failed(L("err.timeout"))
+        }
         guard process.terminationStatus == 0 else {
             let message = String(data: errData, encoding: .utf8) ?? "код \(process.terminationStatus)"
             throw TranscriberError.failed(String(message.suffix(300)))

@@ -4,7 +4,7 @@ import Carbon.HIToolbox
 import IOKit.hid
 import ServiceManagement
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private enum State {
         case idle
         case recording(start: Date)
@@ -12,13 +12,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var statusItem: NSStatusItem!
+    private let statusMenu = NSMenu()
     private let recorder = Recorder()
     private var state: State = .idle
     private var mainHotKeyID: UInt32?
+    private var hotKeyRegistrationFailed = false
     private var modifierMonitor: ModifierKeyMonitor?
     private var escHotKeyID: UInt32?
     private var recordingTimer: Timer?
     private var lastTranscript: String = ""
+    /// Bumped for every transcription and on cancel, so stale results are ignored.
+    private var transcriptionID = 0
 
     private let maxRecordingSeconds: TimeInterval = 600
 
@@ -50,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         applyIcon(symbol: "mic", tint: nil)
+        statusMenu.delegate = self
+        statusItem.menu = statusMenu
         rebuildMenu()
 
         ModelManager.shared.onDownloadStateChange = { [weak self] in self?.rebuildMenu() }
@@ -57,11 +63,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerMainHotKey()
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
 
+        // Sleeping mid-recording kills the capture and swallows the key release —
+        // wrap up cleanly instead of staying stuck in "recording" forever.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, case .recording = self.state else { return }
+            self.cancelRecording()
+        }
         // NSEvent monitors can go quiet after system sleep — re-arm on wake.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.registerMainHotKey()
+            guard let self else { return }
+            if case .recording = self.state { self.cancelRecording() }
+            self.registerMainHotKey()
         }
 
         if CommandLine.arguments.contains("--hud-test") {
@@ -177,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modifierMonitor?.stop()
         modifierMonitor = nil
 
+        hotKeyRegistrationFailed = false
         if hotKeyModifierOnly, let monitor = ModifierKeyMonitor(keyCode: UInt16(hotKeyCode)) {
             monitor.onPress = { [weak self] in self?.hotKeyPressed() }
             monitor.onRelease = { [weak self] in self?.hotKeyReleased() }
@@ -194,6 +211,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pressed: { [weak self] in self?.hotKeyPressed() },
                 released: { [weak self] in self?.hotKeyReleased() }
             )
+            // Registration fails silently when another app owns the combo — surface it.
+            hotKeyRegistrationFailed = mainHotKeyID == nil
         }
     }
 
@@ -310,11 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyIcon(symbol: "mic.fill", tint: .systemOrange)
         HUD.shared.showPreparing()
 
-        escHotKeyID = HotKeyCenter.shared.register(
-            keyCode: UInt32(kVK_Escape),
-            modifiers: 0,
-            pressed: { [weak self] in self?.cancelRecording() }
-        )
+        registerEscHotKey()
 
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.recordingTick()
@@ -346,6 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func cancelRecording() {
         guard case .recording = state else { return }
         endRecordingUI()
+        unregisterEscHotKey()
         recorder.cancel()
         state = .idle
         applyIcon(symbol: "mic", tint: nil)
@@ -361,6 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let localModel = ModelManager.shared.defaultModelURL
 
         guard let wav = recorder.stop(), engine.provider != nil || localModel != nil else {
+            unregisterEscHotKey()
             state = .idle
             applyIcon(symbol: "mic", tint: nil)
             HUD.shared.hide()
@@ -378,6 +395,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
 
         let language = UserDefaults.standard.string(forKey: "language") ?? "auto"
+        transcriptionID += 1
+        let requestID = transcriptionID
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var usedFallback = false
             let result = Result { () throws -> String in
@@ -404,7 +423,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             try? FileManager.default.removeItem(at: wav)
             DispatchQueue.main.async {
-                self?.finishTranscription(result, usedFallback: usedFallback)
+                self?.finishTranscription(result, usedFallback: usedFallback, requestID: requestID)
             }
         }
     }
@@ -412,13 +431,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func endRecordingUI() {
         recordingTimer?.invalidate()
         recordingTimer = nil
+    }
+
+    /// Esc stays registered through recording AND processing, so a hung
+    /// transcription can always be abandoned.
+    private func registerEscHotKey() {
+        guard escHotKeyID == nil else { return }
+        escHotKeyID = HotKeyCenter.shared.register(
+            keyCode: UInt32(kVK_Escape),
+            modifiers: 0,
+            pressed: { [weak self] in self?.escPressed() }
+        )
+    }
+
+    private func unregisterEscHotKey() {
         if let id = escHotKeyID {
             HotKeyCenter.shared.unregister(id)
             escHotKeyID = nil
         }
     }
 
-    private func finishTranscription(_ result: Result<String, Error>, usedFallback: Bool = false) {
+    private func escPressed() {
+        switch state {
+        case .recording:
+            cancelRecording()
+        case .processing:
+            cancelProcessing()
+        case .idle:
+            break
+        }
+    }
+
+    /// Abandon a running transcription: back to idle immediately; the background
+    /// work finishes on its own and its result is discarded by the id check.
+    @objc private func cancelProcessing() {
+        guard case .processing = state else { return }
+        transcriptionID += 1
+        unregisterEscHotKey()
+        state = .idle
+        applyIcon(symbol: "mic", tint: nil)
+        HUD.shared.hide()
+        rebuildMenu()
+    }
+
+    private func finishTranscription(
+        _ result: Result<String, Error>, usedFallback: Bool = false, requestID: Int
+    ) {
+        // The user may have cancelled (or started something newer) meanwhile.
+        guard requestID == transcriptionID, case .processing = state else { return }
+        unregisterEscHotKey()
         state = .idle
         applyIcon(symbol: "mic", tint: nil)
         switch result {
@@ -440,8 +501,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu
 
+    /// The menu is repopulated right before it opens, so time-sensitive hints
+    /// (Secure Input, permissions) reflect the actual current state.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        populate(menu)
+    }
+
     private func rebuildMenu() {
-        let menu = NSMenu()
+        populate(statusMenu)
+    }
+
+    private func populate(_ menu: NSMenu) {
+        menu.removeAllItems()
 
         let statusTitle: String
         switch state {
@@ -469,6 +540,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(makeItem(L("menu.axSettings"), action: #selector(openAccessibilitySettings)))
         }
 
+        // Password fields enable Secure Input system-wide, which mutes keyboard
+        // monitors — the modifier hotkey looks randomly broken without this hint.
+        if hotKeyModifierOnly && IsSecureEventInputEnabled() {
+            let warn = NSMenuItem(title: L("warn.secureInput"), action: nil, keyEquivalent: "")
+            warn.isEnabled = false
+            menu.addItem(warn)
+        }
+
+        if hotKeyRegistrationFailed {
+            let warn = NSMenuItem(
+                title: L("warn.hotkeyTaken", hotKeyTitle), action: nil, keyEquivalent: ""
+            )
+            warn.isEnabled = false
+            menu.addItem(warn)
+        }
+
         switch state {
         case .idle:
             menu.addItem(makeItem(L("menu.record"), action: #selector(toggleRecording)))
@@ -476,7 +563,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(makeItem(L("menu.finish"), action: #selector(stopAndTranscribe)))
             menu.addItem(makeItem(L("menu.cancel"), action: #selector(cancelRecording)))
         case .processing:
-            break
+            menu.addItem(makeItem(L("menu.cancel"), action: #selector(cancelProcessing)))
         }
 
         if !lastTranscript.isEmpty {
@@ -510,8 +597,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(loginItem)
         menu.addItem(.separator())
         menu.addItem(makeItem(L("menu.quit"), action: #selector(quit), keyEquivalent: "q"))
-
-        statusItem.menu = menu
     }
 
     private func buildEngineMenu() -> NSMenuItem {
