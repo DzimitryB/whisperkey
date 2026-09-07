@@ -2,11 +2,17 @@ import AVFoundation
 
 /// Records the default microphone, converting on the fly to 16 kHz mono Int16 —
 /// the format whisper.cpp expects.
+///
+/// A fresh AVAudioEngine is created for every recording so the CURRENT default
+/// input device is always picked up (a long-lived engine stays bound to the device
+/// that was default at first use — switching headphones → built-in mic would leave
+/// it capturing silence). If the audio configuration changes mid-recording, the
+/// engine is rebuilt on the new device and capture continues.
 final class Recorder {
-    private let engine = AVAudioEngine()
-    private var converter: AVAudioConverter?
+    private var engine: AVAudioEngine?
     private var samples: [Int16] = []
     private let lock = NSLock()
+    private var configObserver: NSObjectProtocol?
     private(set) var isRecording = false
 
     /// Called from the audio tap queue with the peak level (0...1) of each chunk.
@@ -20,6 +26,10 @@ final class Recorder {
 
     /// Below this int16 peak a chunk is treated as digital silence from a warming-up mic.
     private static let signalThreshold: Int16 = 10
+
+    private let outFormat = AVAudioFormat(
+        commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true
+    )!
 
     enum RecorderError: LocalizedError {
         case noInput
@@ -39,29 +49,16 @@ final class Recorder {
         lock.unlock()
         firstBufferReported = false
 
-        let input = engine.inputNode
-        let inFormat = input.outputFormat(forBus: 0)
-        guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
-            throw RecorderError.noInput
-        }
-        guard let outFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true
-        ), let converter = AVAudioConverter(from: inFormat, to: outFormat) else {
-            throw RecorderError.converterFailed
-        }
-        self.converter = converter
-
-        input.installTap(onBus: 0, bufferSize: 4096, format: inFormat) { [weak self] buffer, _ in
-            self?.append(buffer, to: outFormat)
-        }
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            input.removeTap(onBus: 0)
-            throw error
-        }
+        try startEngine()
         isRecording = true
+
+        // Rebuild the engine if the audio device changes mid-recording
+        // (e.g. switching from headphones to the built-in mic).
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.handleConfigurationChange()
+        }
     }
 
     /// Stops and returns a WAV file URL, or nil if nothing meaningful was recorded.
@@ -97,16 +94,65 @@ final class Recorder {
         lock.unlock()
     }
 
-    private func finishEngine() {
-        guard isRecording else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        isRecording = false
-        converter = nil
+    // MARK: - Engine lifecycle
+
+    private func startEngine() throws {
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        let inFormat = input.outputFormat(forBus: 0)
+        guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
+            throw RecorderError.noInput
+        }
+        guard let converter = AVAudioConverter(from: inFormat, to: outFormat) else {
+            throw RecorderError.converterFailed
+        }
+        // The converter is captured by the tap closure: each engine gets its own,
+        // so a mid-recording rebuild never races the audio thread.
+        let outFormat = self.outFormat
+        input.installTap(onBus: 0, bufferSize: 4096, format: inFormat) { [weak self] buffer, _ in
+            self?.append(buffer, converter: converter, to: outFormat)
+        }
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            throw error
+        }
+        self.engine = engine
     }
 
-    private func append(_ buffer: AVAudioPCMBuffer, to outFormat: AVAudioFormat) {
-        guard let converter else { return }
+    private func teardownEngine() {
+        if let engine {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
+        engine = nil
+    }
+
+    private func handleConfigurationChange() {
+        guard isRecording else { return }
+        teardownEngine()
+        // Give CoreAudio a moment to settle on the new device, then resume capture.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, self.isRecording, self.engine == nil else { return }
+            try? self.startEngine()
+        }
+    }
+
+    private func finishEngine() {
+        guard isRecording else { return }
+        if let configObserver {
+            NotificationCenter.default.removeObserver(configObserver)
+        }
+        configObserver = nil
+        teardownEngine()
+        isRecording = false
+    }
+
+    // MARK: - Audio data
+
+    private func append(_ buffer: AVAudioPCMBuffer, converter: AVAudioConverter, to outFormat: AVAudioFormat) {
         let ratio = outFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
         guard let out = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
