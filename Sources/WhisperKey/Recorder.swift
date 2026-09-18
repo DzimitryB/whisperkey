@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 
 /// Records the default microphone, converting on the fly to 16 kHz mono Int16 —
 /// the format whisper.cpp expects.
@@ -14,6 +15,24 @@ final class Recorder {
     private let lock = NSLock()
     private var configObserver: NSObjectProtocol?
     private(set) var isRecording = false
+
+    /// Input device the running engine was built for, so spurious configuration
+    /// notifications (macOS posts one right after every engine start) don't cause
+    /// an endless teardown/restart loop that captures nothing.
+    private var activeInputDevice = AudioDeviceID(0)
+    private(set) var restartCount = 0
+    private static let maxRestartsPerRecording = 3
+
+    /// Buffers seen in this recording, regardless of loudness — tells "engine is
+    /// alive but the user is quiet" apart from "engine is dead".
+    private var bufferCount = 0
+    var hasIncomingAudio: Bool { capturedBufferCount > 0 }
+
+    var capturedBufferCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return bufferCount
+    }
 
     /// Called from the audio tap queue with the peak level (0...1) of each chunk.
     var levelHandler: ((Float) -> Void)?
@@ -46,8 +65,10 @@ final class Recorder {
     func start() throws {
         lock.lock()
         samples.removeAll()
+        bufferCount = 0
         lock.unlock()
         firstBufferReported = false
+        restartCount = 0
 
         try startEngine()
         isRecording = true
@@ -103,14 +124,14 @@ final class Recorder {
         guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
             throw RecorderError.noInput
         }
-        guard let converter = AVAudioConverter(from: inFormat, to: outFormat) else {
+        let target = outFormat
+        guard let converter = AVAudioConverter(from: inFormat, to: target) else {
             throw RecorderError.converterFailed
         }
         // The converter is captured by the tap closure: each engine gets its own,
         // so a mid-recording rebuild never races the audio thread.
-        let outFormat = self.outFormat
         input.installTap(onBus: 0, bufferSize: 4096, format: inFormat) { [weak self] buffer, _ in
-            self?.append(buffer, converter: converter, to: outFormat)
+            self?.append(buffer, converter: converter, to: target)
         }
         engine.prepare()
         do {
@@ -120,6 +141,21 @@ final class Recorder {
             throw error
         }
         self.engine = engine
+        activeInputDevice = Self.defaultInputDevice()
+    }
+
+    private static func defaultInputDevice() -> AudioDeviceID {
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device
+        )
+        return device
     }
 
     private func teardownEngine() {
@@ -132,6 +168,15 @@ final class Recorder {
 
     private func handleConfigurationChange() {
         guard isRecording else { return }
+        // macOS posts this notification for harmless reasons too — including right
+        // after our own engine starts. Rebuilding on those would loop forever and
+        // capture nothing, so only react when the device really changed or died.
+        let device = Self.defaultInputDevice()
+        let engineAlive = engine?.isRunning ?? false
+        guard device != activeInputDevice || !engineAlive else { return }
+        guard restartCount < Self.maxRestartsPerRecording else { return }
+        restartCount += 1
+
         teardownEngine()
         // Give CoreAudio a moment to settle on the new device, then resume capture.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
@@ -171,6 +216,7 @@ final class Recorder {
         let chunk = Array(UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength)))
         lock.lock()
         samples.append(contentsOf: chunk)
+        bufferCount += 1
         lock.unlock()
 
         var peak: Int16 = 0

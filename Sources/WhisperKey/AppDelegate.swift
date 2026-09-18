@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var modifierMonitor: ModifierKeyMonitor?
     private var escHotKeyID: UInt32?
     private var recordingTimer: Timer?
+    private var captureLive = false
     private var lastTranscript: String = ""
     /// Bumped for every transcription and on cancel, so stale results are ignored.
     private var transcriptionID = 0
@@ -46,6 +47,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let idx = CommandLine.arguments.firstIndex(of: "--hud-shot"),
            CommandLine.arguments.count > idx + 1 {
             runHUDShots(directory: CommandLine.arguments[idx + 1])
+            return
+        }
+
+        if CommandLine.arguments.contains("--mic-check") {
+            runMicCheck()
             return
         }
 
@@ -101,6 +107,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
         L10n.current = L10n.languages[popup.indexOfSelectedItem].code
+    }
+
+    /// Records for a few seconds and prints capture diagnostics: whether buffers
+    /// flow, how loud they are, and whether the engine had to restart.
+    private func runMicCheck() {
+        let seconds = 4.0
+        var peak: Float = 0
+        recorder.levelHandler = { level in peak = max(peak, level) }
+        do {
+            try recorder.start()
+        } catch {
+            print("mic-check: start failed — \(error.localizedDescription)")
+            NSApp.terminate(nil)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self else { return }
+            let buffers = self.recorder.capturedBufferCount
+            let restarts = self.recorder.restartCount
+            let wav = self.recorder.stop()
+            let bytes = wav.flatMap { try? Data(contentsOf: $0).count } ?? 0
+            wav.map { try? FileManager.default.removeItem(at: $0) }
+            print("mic-check: buffers=\(buffers) peak=\(String(format: "%.3f", peak)) "
+                + "engineRestarts=\(restarts) wavBytes=\(bytes)")
+            NSApp.terminate(nil)
+        }
     }
 
     /// Saves PNG snapshots of the three HUD states into the given directory, then quits.
@@ -326,6 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The mic hardware needs a moment (Bluetooth mics up to ~1 s) before real
         // audio flows; until then show "starting" so the user doesn't speak into the void.
         state = .recording(start: Date())
+        captureLive = false
         applyIcon(symbol: "mic.fill", tint: .systemOrange)
         HUD.shared.showPreparing()
 
@@ -337,9 +370,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
     }
 
-    /// First audio buffer arrived — capture is really live: now show "recording".
+    /// Capture is really live: first audio with signal (or audio flowing quietly
+    /// for a while) — now show "recording".
     private func captureDidStart() {
-        guard case .recording = state else { return }
+        guard case .recording = state, !captureLive else { return }
+        captureLive = true
         state = .recording(start: Date())
         playSound("Pop")
         applyIcon(symbol: "mic.fill", tint: .systemRed)
@@ -350,6 +385,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func recordingTick() {
         guard case .recording(let start) = state else { return }
         let elapsed = Date().timeIntervalSince(start)
+        // Audio is flowing but stayed below the signal threshold — the user may
+        // simply be speaking quietly, so stop waiting and show "recording".
+        if !captureLive, elapsed >= 2, recorder.hasIncomingAudio {
+            captureDidStart()
+            return
+        }
         if elapsed >= maxRecordingSeconds {
             stopAndTranscribe()
         } else {
@@ -376,11 +417,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let engine = currentEngine
         let localModel = ModelManager.shared.defaultModelURL
 
+        let heldLongEnough = captureLive
         guard let wav = recorder.stop(), engine.provider != nil || localModel != nil else {
             unregisterEscHotKey()
             state = .idle
             applyIcon(symbol: "mic", tint: nil)
-            HUD.shared.hide()
+            // A quick misfire needs no explanation, but a real attempt that captured
+            // no audio must say so instead of silently doing nothing.
+            if heldLongEnough {
+                HUD.shared.showDone(success: false, text: L("hud.nosignal"))
+            } else {
+                HUD.shared.hide()
+            }
             rebuildMenu()
             return
         }
