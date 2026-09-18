@@ -398,11 +398,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             captureDidStart()
             return
         }
+        // Nothing at all after several seconds: the OS is not handing us the mic.
+        // Rebuilding didn't help, so stop and say so instead of pretending to record.
+        if !captureLive, elapsed >= 4, !recorder.hasIncomingAudio {
+            abortRecordingWithoutAudio()
+            return
+        }
         if elapsed >= maxRecordingSeconds {
             stopAndTranscribe()
         } else {
-            HUD.shared.updateTime(Int(elapsed))
+            // Only the live state owns the timer text; while preparing, the HUD must
+            // keep saying "starting the mic" rather than claiming to record.
+            if captureLive { HUD.shared.updateTime(Int(elapsed)) }
             rebuildMenu()
+        }
+    }
+
+    private func abortRecordingWithoutAudio() {
+        endRecordingUI()
+        unregisterEscHotKey()
+        recorder.cancel()
+        state = .idle
+        applyIcon(symbol: "mic", tint: nil)
+        HUD.shared.showDone(success: false, text: L("hud.nomic"))
+        rebuildMenu()
+        showMicrophoneTroubleAlert()
+    }
+
+    /// The OS reports permission as granted yet delivers no audio — typical when the
+    /// TCC grant no longer matches the (ad-hoc, rebuild-changing) code signature.
+    private func showMicrophoneTroubleAlert() {
+        let alert = NSAlert()
+        alert.messageText = L("hud.nomic")
+        alert.informativeText = L("alert.noMic.text")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L("btn.openSettings"))
+        alert.addButton(withTitle: L("btn.cancel"))
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            let url = URL(string:
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -646,6 +682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(sounds)
 
         menu.addItem(.separator())
+        menu.addItem(makeItem(L("menu.micTest"), action: #selector(runMicDiagnostic)))
         menu.addItem(makeItem(L("menu.modelsFolder"), action: #selector(openModelsFolder)))
         let loginItem = makeItem(L("menu.login"), action: #selector(toggleLoginItem))
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -905,6 +942,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openAccessibilitySettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         NSWorkspace.shared.open(url)
+    }
+
+    /// Records for three seconds and reports what the OS actually handed over:
+    /// permission state, input device, buffers and peak level. The body is kept in
+    /// English on purpose — it is a technical report meant to be copied and shared.
+    @objc private func runMicDiagnostic() {
+        guard case .idle = state else { return }
+        var peak: Float = 0
+        recorder.levelHandler = { level in peak = max(peak, level) }
+        recorder.onFirstBuffer = nil
+        do {
+            try recorder.start()
+        } catch {
+            showAlert(title: L("hud.nomic"), text: error.localizedDescription)
+            return
+        }
+        HUD.shared.showPreparing()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self else { return }
+            let buffers = self.recorder.capturedBufferCount
+            let restarts = self.recorder.restartCount
+            _ = self.recorder.stop()
+            HUD.shared.hide()
+
+            let permission: String
+            switch AVCaptureDevice.authorizationStatus(for: .audio) {
+            case .authorized: permission = "authorized"
+            case .denied: permission = "denied"
+            case .restricted: permission = "restricted"
+            case .notDetermined: permission = "not determined"
+            @unknown default: permission = "unknown"
+            }
+            let report = """
+                Permission: \(permission)
+                Input device: \(Recorder.defaultInputDeviceName())
+                Buffers received: \(buffers)
+                Peak level: \(String(format: "%.4f", peak))
+                Engine restarts: \(restarts)
+                """
+
+            let alert = NSAlert()
+            alert.messageText = L("menu.micTest")
+            alert.informativeText = report
+            alert.addButton(withTitle: L("edit.copy"))
+            alert.addButton(withTitle: L("btn.openSettings"))
+            alert.addButton(withTitle: L("btn.cancel"))
+            NSApp.activate(ignoringOtherApps: true)
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(report, forType: .string)
+            case .alertSecondButtonReturn:
+                let url = URL(string:
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+                NSWorkspace.shared.open(url)
+            default:
+                break
+            }
+        }
     }
 
     @objc private func openModelsFolder() {

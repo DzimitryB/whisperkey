@@ -180,6 +180,22 @@ final class Recorder {
         return true
     }
 
+    static func defaultInputDeviceName() -> String {
+        let device = defaultInputDevice()
+        guard device != 0 else { return "none" }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceNameCFString,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var name: CFString = "" as CFString
+        var size = UInt32(MemoryLayout<CFString>.size)
+        let status = withUnsafeMutablePointer(to: &name) { pointer in
+            AudioObjectGetPropertyData(device, &address, 0, nil, &size, pointer)
+        }
+        return status == noErr ? (name as String) : "unknown (id \(device))"
+    }
+
     private static func defaultInputDevice() -> AudioDeviceID {
         var device = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
