@@ -122,8 +122,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.terminate(nil)
             return
         }
+        let watchdog = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            self?.recorder.restartIfStalled(stallSeconds: 1.5)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
             guard let self else { return }
+            watchdog.invalidate()
             let buffers = self.recorder.capturedBufferCount
             let restarts = self.recorder.restartCount
             let wav = self.recorder.stop()
@@ -385,6 +389,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func recordingTick() {
         guard case .recording(let start) = state else { return }
         let elapsed = Date().timeIntervalSince(start)
+        // Audio stopped flowing (or never started): rebuild the capture chain.
+        // Covers device/sample-rate switches that give no usable notification.
+        recorder.restartIfStalled(stallSeconds: 1.5)
         // Audio is flowing but stayed below the signal threshold — the user may
         // simply be speaking quietly, so stop waiting and show "recording".
         if !captureLive, elapsed >= 2, recorder.hasIncomingAudio {

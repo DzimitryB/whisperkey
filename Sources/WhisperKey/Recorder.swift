@@ -20,12 +20,26 @@ final class Recorder {
     /// notifications (macOS posts one right after every engine start) don't cause
     /// an endless teardown/restart loop that captures nothing.
     private var activeInputDevice = AudioDeviceID(0)
+    /// Format the tap was installed with. Playing audio elsewhere can make CoreAudio
+    /// switch the input's sample rate — same device, engine still "running", but the
+    /// tap stops delivering, so the format has to be compared too.
+    private var activeInputSampleRate: Double = 0
+    private var activeInputChannels: AVAudioChannelCount = 0
     private(set) var restartCount = 0
-    private static let maxRestartsPerRecording = 3
+    private static let maxRestartsPerRecording = 5
 
     /// Buffers seen in this recording, regardless of loudness — tells "engine is
     /// alive but the user is quiet" apart from "engine is dead".
     private var bufferCount = 0
+    private var lastBufferAt: Date?
+
+    /// Seconds since audio last arrived, or since the recording started.
+    var secondsSinceAudio: TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        return Date().timeIntervalSince(lastBufferAt ?? startedAt ?? Date())
+    }
+    private var startedAt: Date?
     var hasIncomingAudio: Bool { capturedBufferCount > 0 }
 
     var capturedBufferCount: Int {
@@ -66,6 +80,8 @@ final class Recorder {
         lock.lock()
         samples.removeAll()
         bufferCount = 0
+        lastBufferAt = nil
+        startedAt = Date()
         lock.unlock()
         firstBufferReported = false
         restartCount = 0
@@ -142,6 +158,26 @@ final class Recorder {
         }
         self.engine = engine
         activeInputDevice = Self.defaultInputDevice()
+        activeInputSampleRate = inFormat.sampleRate
+        activeInputChannels = inFormat.channelCount
+    }
+
+    /// Rebuilds the capture chain when audio has stopped flowing for `stallSeconds`,
+    /// covering configuration changes that arrive without a usable notification
+    /// (Bluetooth mode switches, sample-rate changes while media plays).
+    /// Returns true if a restart was attempted.
+    @discardableResult
+    func restartIfStalled(stallSeconds: TimeInterval) -> Bool {
+        guard isRecording, secondsSinceAudio >= stallSeconds else { return false }
+        guard restartCount < Self.maxRestartsPerRecording else { return false }
+        restartCount += 1
+        teardownEngine()
+        try? startEngine()
+        lock.lock()
+        // Treat the restart as fresh activity so the next check waits again.
+        lastBufferAt = Date()
+        lock.unlock()
+        return true
     }
 
     private static func defaultInputDevice() -> AudioDeviceID {
@@ -173,7 +209,11 @@ final class Recorder {
         // capture nothing, so only react when the device really changed or died.
         let device = Self.defaultInputDevice()
         let engineAlive = engine?.isRunning ?? false
-        guard device != activeInputDevice || !engineAlive else { return }
+        let format = engine?.inputNode.outputFormat(forBus: 0)
+        let formatChanged = format.map {
+            $0.sampleRate != activeInputSampleRate || $0.channelCount != activeInputChannels
+        } ?? false
+        guard device != activeInputDevice || formatChanged || !engineAlive else { return }
         guard restartCount < Self.maxRestartsPerRecording else { return }
         restartCount += 1
 
@@ -217,6 +257,7 @@ final class Recorder {
         lock.lock()
         samples.append(contentsOf: chunk)
         bufferCount += 1
+        lastBufferAt = Date()
         lock.unlock()
 
         var peak: Int16 = 0
