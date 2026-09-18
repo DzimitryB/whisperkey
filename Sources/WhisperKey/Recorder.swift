@@ -1,3 +1,4 @@
+import AudioToolbox
 import AVFoundation
 import CoreAudio
 
@@ -135,6 +136,15 @@ final class Recorder {
 
     private func startEngine() throws {
         let engine = AVAudioEngine()
+        // Pin the chosen device before touching the format: the input unit reports
+        // the format of whatever device it is bound to at that moment.
+        if let device = Self.pinnedDevice(), let unit = engine.inputNode.audioUnit {
+            var id = device
+            AudioUnitSetProperty(
+                unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                &id, UInt32(MemoryLayout<AudioDeviceID>.size)
+            )
+        }
         let input = engine.inputNode
         let inFormat = input.outputFormat(forBus: 0)
         guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
@@ -180,34 +190,23 @@ final class Recorder {
         return true
     }
 
-    static func defaultInputDeviceName() -> String {
-        let device = defaultInputDevice()
-        guard device != 0 else { return "none" }
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceNameCFString,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var name: CFString = "" as CFString
-        var size = UInt32(MemoryLayout<CFString>.size)
-        let status = withUnsafeMutablePointer(to: &name) { pointer in
-            AudioObjectGetPropertyData(device, &address, 0, nil, &size, pointer)
-        }
-        return status == noErr ? (name as String) : "unknown (id \(device))"
+    /// Device the user pinned in the menu, or nil when following the system default.
+    static func pinnedDevice() -> AudioDeviceID? {
+        guard let uid = UserDefaults.standard.string(forKey: "inputDeviceUID"), !uid.isEmpty
+        else { return nil }
+        return AudioDevices.id(forUID: uid)
     }
 
+    static func currentInputDeviceName() -> String {
+        let device = pinnedDevice() ?? AudioDevices.systemDefaultInput()
+        guard device != 0 else { return "none" }
+        let pinned = pinnedDevice() != nil ? " (pinned)" : " (system default)"
+        return (AudioDevices.name(forID: device) ?? "unknown id \(device)") + pinned
+    }
+
+    /// The device capture should be running on right now.
     private static func defaultInputDevice() -> AudioDeviceID {
-        var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device
-        )
-        return device
+        pinnedDevice() ?? AudioDevices.systemDefaultInput()
     }
 
     private func teardownEngine() {

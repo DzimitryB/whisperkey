@@ -430,16 +430,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func showMicrophoneTroubleAlert() {
         let alert = NSAlert()
         alert.messageText = L("hud.nomic")
-        alert.informativeText = L("alert.noMic.text")
+        alert.informativeText = L("alert.noAudio.text", Recorder.currentInputDeviceName())
         alert.alertStyle = .warning
-        alert.addButton(withTitle: L("btn.openSettings"))
         alert.addButton(withTitle: L("btn.cancel"))
         NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn {
-            let url = URL(string:
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
-            NSWorkspace.shared.open(url)
-        }
+        alert.runModal()
     }
 
     @objc private func cancelRecording() {
@@ -666,6 +661,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+        menu.addItem(buildInputDeviceMenu())
         menu.addItem(buildEngineMenu())
         menu.addItem(buildModelMenu())
         menu.addItem(buildLanguageMenu())
@@ -689,6 +685,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(loginItem)
         menu.addItem(.separator())
         menu.addItem(makeItem(L("menu.quit"), action: #selector(quit), keyEquivalent: "q"))
+    }
+
+    private func buildInputDeviceMenu() -> NSMenuItem {
+        let root = NSMenuItem(title: L("menu.inputDevice"), action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        let selected = UserDefaults.standard.string(forKey: "inputDeviceUID") ?? ""
+
+        let system = makeItem(L("device.system"), action: #selector(selectInputDevice(_:)))
+        system.representedObject = ""
+        system.state = selected.isEmpty ? .on : .off
+        submenu.addItem(system)
+        submenu.addItem(.separator())
+
+        for device in AudioDevices.inputDevices() {
+            let item = makeItem(device.name, action: #selector(selectInputDevice(_:)))
+            item.representedObject = device.uid
+            item.state = selected == device.uid ? .on : .off
+            submenu.addItem(item)
+        }
+
+        root.submenu = submenu
+        return root
     }
 
     private func buildEngineMenu() -> NSMenuItem {
@@ -846,6 +864,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pb.setString(lastTranscript, forType: .string)
     }
 
+    @objc private func selectInputDevice(_ sender: NSMenuItem) {
+        guard let uid = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(uid, forKey: "inputDeviceUID")
+        rebuildMenu()
+    }
+
     @objc private func selectEngine(_ sender: NSMenuItem) {
         let option = EngineOption.all[sender.tag]
         UserDefaults.standard.set(option.provider?.id ?? "local", forKey: "engineProvider")
@@ -976,7 +1000,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             let report = """
                 Permission: \(permission)
-                Input device: \(Recorder.defaultInputDeviceName())
+                Input device: \(Recorder.currentInputDeviceName())
                 Buffers received: \(buffers)
                 Peak level: \(String(format: "%.4f", peak))
                 Engine restarts: \(restarts)
